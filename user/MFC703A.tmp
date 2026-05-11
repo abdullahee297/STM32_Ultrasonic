@@ -1,0 +1,845 @@
+#include "general.h"
+#include "defines.h"
+#include "menu.h"
+#include "tm_stm32f4_servo.h"
+//#define DEBUG_CONSOLE_EN
+
+//void gpsConfig();
+//char *strstr(const char *s1, const char *s2);
+int main()
+{
+  uint8_t bucket_position = 1;
+  uint8_t toggle = 0;
+  uint8_t running = 0;
+  uint8_t recycler_state;
+  uint32_t returnCode;
+  uint8_t gps_rcv_byte;
+  uint8_t state;
+  uint8_t recycler_byte;
+  uint8_t P2_W8 = 0;
+  uint8_t P3_W8 = 0;
+  uint8_t P4_W8 = 0;
+  uint8_t P5_W8 = 0;
+  uint8_t R_W8 = 0;
+  TM_SERVO_t Servo1, Servo2, Servo3;
+
+//============INITIALIZE-ONBOARD-LEDs==========<<
+  InitLedGpios();
+//===============SYSTICK===============//
+  returnCode = Config_Systick_168MHz();
+  if(returnCode != false){
+    //GPIO_SetBits(GPIOD, LED_RED);     
+  }  //Systick Not Initialized RED LED
+  else{
+    //GPIO_SetBits(GPIOD, LED_GREEN);     //Systick Initialized Successflly GREEN LED
+  }
+//===========INITIALIZE-IND-WDOG============//
+    //vIWDGResetEn();
+//===========INITIALIZE-UART3-CONSOLE============//
+    ConsoleUart3Init();
+//==============INITIALIZE-UART1-GPS==============//
+    //GPSUart1Init();
+//==============INITIALIZE-UART1-GSM==============//    
+    //GSMUart4Init();
+//==============INITIALIZE-TIMER-7==============//   
+    TIM7_Configuration();
+//==============INITIALIZE-ADC==============//      
+    //Init_ADC_Int();
+//==============INITIALIZE-MOTORS PINS==============//      
+      InitGPIOs();
+//==============INITIALIZE-SERVO==============//    
+     /* Initialize servo 1, TIM2, Channel 1, Pinspack 2 = PA5 */
+    TM_SERVO_Init(&Servo1, TIM2, TM_PWM_Channel_1, TM_PWM_PinsPack_2);
+    
+    /* Initialize servo 2, TIM2, Channel 2, Pinspack 2 = PB3 */
+    TM_SERVO_Init(&Servo2, TIM2, TM_PWM_Channel_2, TM_PWM_PinsPack_2);
+    
+    /* Initialize servo 3, TIM2, Channel 4, Pinspack 2 = PB11 */
+    TM_SERVO_Init(&Servo3, TIM2, TM_PWM_Channel_4, TM_PWM_PinsPack_2);
+    
+//==============INITIALIZE-STATE MACHINE==============//     
+
+    recycler_state = Reset_routine;
+#ifdef DEBUG_CONSOLE_EN
+    CONSOLE("Start-Up Routine\n\r");
+#endif                
+    GPIO_SetBits(GPIOC, CRUSHER_MTR1);
+    GPIO_SetBits(GPIOC, CRUSHER_MTR2);
+    Conveyor_Stop();
+    GPIO_SetBits(GPIOD, LED_RED);
+    GPIO_ResetBits(GPIOD, LED_GREEN);
+    TM_SERVO_SetDegrees(&Servo2, 0);
+    InitMenu();
+while(1)
+{
+  
+  HANDLE_INT_WATCHDOG
+MenuHandler();
+        if(false//CheckRx())
+        {
+             recycler_byte = getch(DEBUG_UART_INDEX);
+             if(recycler_byte == '$')
+              {   
+                CONSOLE("$p");
+              }
+              else if(recycler_byte == 'r')
+              {
+                GPIO_SetBits(GPIOD, LED_RED);
+                GPIO_ResetBits(GPIOD, LED_GREEN);
+                CONSOLE("@r");
+                #ifdef DEBUG_CONSOLE_EN
+                CONSOLE(">RESET Routine Command Received\n\r");
+                #endif
+                recycler_state = Reset_routine;
+              }
+              else if(recycler_byte == 'c' && recycler_state == IDLE)
+              {
+                GPIO_SetBits(GPIOD, LED_RED);
+                GPIO_ResetBits(GPIOD, LED_GREEN);
+                //CONSOLE("@t");
+                CONSOLE("@c");
+                #ifdef DEBUG_CONSOLE_EN
+                CONSOLE(">Get Bottle Inside...\n\r");
+                #endif
+                recycler_state = GetBottleInside;
+              }
+              else if(recycler_byte == 'b' && recycler_state >= GetBottleInside_P1)
+              {
+                CONSOLE("@b");
+                #ifdef DEBUG_CONSOLE_EN
+                CONSOLE(">Barcode Detected Successfully...\n\r");
+                #endif
+                Conveyor_MoveIn();
+                recycler_state = GotoBin;
+                AT_time_elap = ulTTmrRead1ms();
+              }
+              else if(recycler_byte == 'x' && recycler_state == IDLE)
+              {
+                GPIO_SetBits(GPIOD, LED_RED);
+                GPIO_ResetBits(GPIOD, LED_GREEN);
+                CONSOLE("@x");
+                #ifdef DEBUG_CONSOLE_EN
+                CONSOLE(">External Scan Received\n\r");
+                #endif
+                recycler_state = Ext_Scan;
+                AT_time_elap = ulTTmrRead1ms();
+              }
+              else if(recycler_byte == 'c' && recycler_state != IDLE)
+              {
+                CONSOLE("!c\n\r");
+              }  
+              else if(recycler_byte == 'b' && recycler_state < GetBottleInside_P1)
+              {
+                CONSOLE("!b\n\r");  
+              }
+              else if(recycler_byte == 'x' && recycler_state != IDLE)
+              {
+                CONSOLE("!x\n\r");  
+              }
+              else if(recycler_byte == '1' )
+              {
+                TM_SERVO_SetDegrees(&Servo2, 0); 
+                CONSOLE("0 degree\n\r");  
+              }
+              else if(recycler_byte == '2' )
+              {
+                TM_SERVO_SetDegrees(&Servo2, 90); 
+                CONSOLE("90 degree\n\r");  
+              }
+              else if(recycler_byte == '3' )
+              {
+                TM_SERVO_SetDegrees(&Servo2, 180); 
+                CONSOLE("180 degree\n\r");  
+              }
+                           
+        }
+//    IDLE                = 1,
+//    ROTATE_ROLLER       = 2,
+//    ROLLER_W8           = 3,    
+//    ALLIGN_BUCKET_MTR   = 4,    
+//    BUCKET_MTR_W8       = 5,    
+//    BOTTLE_STOPPER_MTR  = 6,    
+//    BOTTLE_STOPPER_W8   = 7,    
+//    ROTATE_CRUSHER_MTR  = 8,    
+//    ROTATE_CRUSHER_W8   = 9,    
+//    RETURN_MTR1         = 10,
+//    RETURN_MTR_W8       = 11,
+//    W8                  = 12,
+//    Reset_routine       = 13,
+//    Reset_routine_W8    = 14,
+//    Ext_Scan            = 15,        
+//    Ext_Scan_W8         = 16,
+//    GotoBin             = 17,        
+//    GetBottleInside     = 18,
+//    GetBottleInside_P1  = 19,
+//    GetBottleInside_P2  = 20,
+//    GetBottleInside_P3  = 21,
+//    GetBottleInside_P4  = 22,
+//    GetBottleInside_P5  = 23 
+  
+      switch(recycler_state)
+      {
+      
+       case IDLE:
+           //***************************************         
+           //--------------------
+           //CLOSE GATE MOTOR
+           //-------------------- 
+           TM_SERVO_SetDegrees(&Servo2, 0); 
+           P2_W8 = 0;
+           P3_W8 = 0;
+           P4_W8 = 0;
+           P5_W8 = 0;
+           R_W8 = 0;
+           Conveyor_Stop();
+           GPIO_SetBits(GPIOD, LED_GREEN);
+           GPIO_ResetBits(GPIOD, LED_RED);
+           if((GPIO_ReadInputDataBit(GPIOE, PROXIMITY_1) == false 
+               || GPIO_ReadInputDataBit(GPIOE, PROXIMITY_2) == false 
+                 || GPIO_ReadInputDataBit(GPIOE, PROXIMITY_3) == false 
+                   || GPIO_ReadInputDataBit(GPIOE, PROXIMITY_4) == false 
+                     || GPIO_ReadInputDataBit(GPIOE, PROXIMITY_5) == false))
+           {
+                GPIO_SetBits(GPIOD, LED_RED);
+                GPIO_ResetBits(GPIOD, LED_GREEN);
+                CONSOLE("@m");
+                #ifdef DEBUG_CONSOLE_EN
+                CONSOLE(">Malfuntion Reset Routine\n\r");
+                #endif
+                recycler_state = Reset_routine;
+            }
+           //======================================= 
+       break;
+       case GetBottleInside:
+            //*****************************************         
+            //--------------------
+            //OPEN GATE MOTOR
+            //--------------------        
+            TM_SERVO_SetDegrees(&Servo2, 180); 
+            recycler_state = GetBottleInside_P1;
+            AT_time_elap = ulTTmrRead1ms();
+          //========================================= 
+       break;
+       case GetBottleInside_P1:
+            //*****************************************   
+            if(GPIO_ReadInputDataBit(GPIOE, PROXIMITY_1) == false && ulTTmrDiff1ms(AT_time_elap)<6000)
+            {
+                Conveyor_MoveIn();
+                recycler_state = GetBottleInside_P2;
+                AT_time_elap = ulTTmrRead1ms();
+            }
+            else if(ulTTmrDiff1ms(AT_time_elap)>10000)
+            {
+                //--------------------
+                //CLOSE GATE MOTOR
+                //-------------------- 
+                TM_SERVO_SetDegrees(&Servo2, 0);
+                CONSOLE("$t");
+                recycler_state = IDLE;
+            }
+          //========================================= 
+       break;
+       case GetBottleInside_P2:
+            //*****************************************   
+            if(ulTTmrDiff1ms(AT_time_elap)>500 && P2_W8 == 1)
+            {
+                Conveyor_MoveIn();
+                P2_W8 = 0;
+                AT_time_elap = ulTTmrRead1ms();
+                recycler_state = GetBottleInside_P3;
+            }
+            else if(GPIO_ReadInputDataBit(GPIOE, PROXIMITY_2) == false && P2_W8 == 0)
+            {
+                //--------------------
+                //CLOSE GATE MOTOR
+                //-------------------- 
+                TM_SERVO_SetDegrees(&Servo2, 0);
+                Conveyor_Stop();
+                P2_W8 = 1;
+                AT_time_elap = ulTTmrRead1ms();
+            }
+            else if(ulTTmrDiff1ms(AT_time_elap)>3500)
+            {
+                recycler_state = IDLE;
+            }
+          //========================================= 
+       break;
+       case GetBottleInside_P3:
+            //*****************************************   
+            if(ulTTmrDiff1ms(AT_time_elap)>500 && P3_W8 == 1)
+            {
+                Conveyor_MoveIn();
+                P3_W8 = 0;
+                AT_time_elap = ulTTmrRead1ms();
+                recycler_state = GetBottleInside_P4;
+            }
+            else if(GPIO_ReadInputDataBit(GPIOE, PROXIMITY_3) == false && P3_W8 == 0)
+            {
+                Conveyor_Stop();
+                P3_W8 = 1;
+                AT_time_elap = ulTTmrRead1ms();
+            }
+            else if(ulTTmrDiff1ms(AT_time_elap)>2000)
+            {
+                recycler_state = Reset_routine;// Machine Malfunction Detected
+            }
+          //========================================= 
+       break;
+       case GetBottleInside_P4:
+            //*****************************************   
+            if(ulTTmrDiff1ms(AT_time_elap)>500 && P4_W8 == 1)
+            {                
+                #ifdef DEBUG_CONSOLE_EN
+                CONSOLE("Return Routine Started\n\r");
+                #endif
+                //--------------------
+                //OPEN GATE MOTOR
+                //--------------------        
+                TM_SERVO_SetDegrees(&Servo2, 180); 
+                //--------------------
+                //Move Conveyor Outward
+                //--------------------
+                Conveyor_MoveOut();    
+                //--------------------
+                //Go to W8 Area
+                //--------------------    
+                AT_time_elap = ulTTmrRead1ms();
+                #ifdef DEBUG_CONSOLE_EN
+                CONSOLE("Return Routine in Progress\n\r");
+                #endif  
+                P4_W8 = 0;
+                AT_time_elap = ulTTmrRead1ms();
+                recycler_state = Reset_routine_W8;
+            }
+            else if(GPIO_ReadInputDataBit(GPIOE, PROXIMITY_4) == false && P4_W8 == 0)
+            {
+                Conveyor_Stop();
+                P4_W8 = 1;
+                AT_time_elap = ulTTmrRead1ms();
+            }
+            else if(ulTTmrDiff1ms(AT_time_elap)>2000)
+            {
+                recycler_state = Reset_routine;// Machine Malfunction Detected
+            }
+          //========================================= 
+       break;
+       case GotoBin:
+            //*****************************************   
+            if(ulTTmrDiff1ms(AT_time_elap)>2000 && P5_W8 == 1 && GPIO_ReadInputDataBit(GPIOE, PROXIMITY_5) == true)
+            {
+                Conveyor_Stop();
+                P5_W8 = 0;
+                CONSOLE("$r");
+                recycler_state = IDLE;
+                //recycler_state = ROTATE_CRUSHER_MTR;
+            }
+            else if(GPIO_ReadInputDataBit(GPIOE, PROXIMITY_5) == false && P5_W8 == 0)
+            {
+                P5_W8 = 1;
+                AT_time_elap = ulTTmrRead1ms();
+            }
+            else if(ulTTmrDiff1ms(AT_time_elap)>3500)
+            {
+                recycler_state = Reset_routine;// Machine Malfunction Detected
+            }
+          //========================================= 
+       break;        
+       case ROTATE_CRUSHER_MTR:
+                //*****************************************   
+                //--------------------
+                //ROTATE CRUSHER MOTOR
+                //--------------------
+                #ifdef DEBUG_CONSOLE_EN
+                CONSOLE(">Start Crusher Motors...\n\r");
+                #endif
+                GPIO_ResetBits(GPIOC, CRUSHER_MTR1);
+                GPIO_ResetBits(GPIOC, CRUSHER_MTR2);
+                recycler_state = ROTATE_CRUSHER_W8;
+                #ifdef DEBUG_CONSOLE_EN
+                CONSOLE(">Crusher Motor W8 State...\n\r");
+                #endif
+                AT_time_elap = ulTTmrRead1ms(); 
+                //=========================================
+        break;
+        case ROTATE_CRUSHER_W8:
+             //*****************************************
+             if(ulTTmrDiff1ms(AT_time_elap)>=5000)
+             {
+               //---------------------------
+               //STOP ROTATING CRUSHER MOTOR
+               //---------------------------
+               #ifdef DEBUG_CONSOLE_EN
+               CONSOLE(">Stop Crusher Motors & Goto IDLE state...\n\r");
+               #endif
+               GPIO_SetBits(GPIOC, CRUSHER_MTR1);
+               GPIO_SetBits(GPIOC, CRUSHER_MTR2);
+               CONSOLE("$r");
+               recycler_state = IDLE;
+             } 
+             //=========================================
+        break;
+        case Reset_routine:
+              //*****************************************
+              #ifdef DEBUG_CONSOLE_EN
+              CONSOLE("Reset Routine Started\n\r");
+              #endif
+              //--------------------
+              //OPEN GATE MOTOR
+              //--------------------        
+              TM_SERVO_SetDegrees(&Servo2, 180); 
+              //--------------------
+              //Move Conveyor Outward
+              //--------------------
+              Conveyor_MoveOut();
+              //--------------------
+              //Go to W8 Area
+              //--------------------    
+              recycler_state = Reset_routine_W8;
+              AT_time_elap = ulTTmrRead1ms();
+              #ifdef DEBUG_CONSOLE_EN
+              CONSOLE("Reset Routine in Progress\n\r");
+              #endif 
+              //=========================================
+         break;
+         case Reset_routine_W8:             
+             if(ulTTmrDiff1ms(AT_time_elap)>1000 && R_W8 == 1 && GPIO_ReadInputDataBit(GPIOE, PROXIMITY_1) == true)
+            {
+                //--------------------
+                //Close GATE MOTOR
+                //--------------------        
+                TM_SERVO_SetDegrees(&Servo2, 0);
+                 //---------------------------
+                 //Stop Conveyor
+                 //---------------------------
+                Conveyor_Stop();
+                R_W8 = 0;
+                recycler_state = IDLE;
+                #ifdef DEBUG_CONSOLE_EN
+                CONSOLE("Reset Routine Completed...\n\r");
+                #endif
+                CONSOLE("$r");
+            }
+            else if(ulTTmrDiff1ms(AT_time_elap)>5000 || GPIO_ReadInputDataBit(GPIOE, PROXIMITY_1) == false)
+            {
+                R_W8 = 1;
+                AT_time_elap = ulTTmrRead1ms();
+            }
+             //=========================================
+        break;   
+        case Ext_Scan:
+              //*****************************************
+              #ifdef DEBUG_CONSOLE_EN
+              CONSOLE(">External Scan Routine Started\n\r");
+              #endif
+              //--------------------
+              //OPEN GATE MOTOR
+              //--------------------        
+              TM_SERVO_SetDegrees(&Servo2, 180); 
+              //--------------------
+              //Move Conveyor Inward
+              //--------------------
+              Conveyor_MoveIn();    
+              //--------------------
+              //Go to W8 Area
+              //--------------------    
+              recycler_state = Ext_Scan_W8;
+              AT_time_elap = ulTTmrRead1ms();
+              #ifdef DEBUG_CONSOLE_EN
+              CONSOLE(">External Scan Routine in Progress...\n\r");
+              #endif 
+              //=========================================
+         break;
+         case Ext_Scan_W8:
+            //*****************************************          
+             if(ulTTmrDiff1ms(AT_time_elap)>1000 && R_W8 == 1 && GPIO_ReadInputDataBit(GPIOE, PROXIMITY_5) == true)
+            {
+                //--------------------
+                //Close GATE MOTOR
+                //--------------------        
+                TM_SERVO_SetDegrees(&Servo2, 0);
+                 //---------------------------
+                 //Stop Conveyor
+                 //---------------------------
+                Conveyor_Stop();
+                R_W8 = 0;
+                recycler_state = IDLE;
+                //recycler_state = ROTATE_CRUSHER_MTR;
+                #ifdef DEBUG_CONSOLE_EN
+                CONSOLE("External Scan Routine Completed...\n\r");
+                #endif
+                CONSOLE("$x");
+            }
+            else if(ulTTmrDiff1ms(AT_time_elap)>5000)
+            {
+                R_W8 = 1;
+                AT_time_elap = ulTTmrRead1ms();
+            }
+             //=========================================
+        break;
+      }
+         
+  HANDLE_INT_WATCHDOG
+}         
+
+ 
+return 0;
+}
+
+//=====================================================
+//=================Commented Code======================//busy flag to check if micro is busy or not
+  
+//      switch(recycler_state)
+//      {
+//      
+//       case IDLE:
+//       TM_SERVO_SetDegrees(&Servo1, 85);       
+//       TM_SERVO_SetDegrees(&Servo2, 0);
+//       TM_SERVO_SetDegrees(&Servo3, 40);
+//         //TM_SERVO_SetDegrees(&Servo3, 174);
+//         //CONSOLE("$R");
+//         //GPIO_SetBits(GPIOD, LED_RED);
+//        GPIO_SetBits(GPIOD, LED_GREEN);
+//       GPIO_ResetBits(GPIOD, LED_RED);
+//       //GPIO_ResetBits(GPIOD, LED_GREEN);
+//       break;
+//  
+//       case ROTATE_ROLLER:
+//        #ifdef DEBUG_CONSOLE_EN
+//        CONSOLE("ROTATE ROLLER\n\r");
+//        #endif
+//        //--------------------
+//        //ROTATE ROLLER MOTOR
+//        //--------------------
+//        GPIO_ResetBits(GPIOA, ROLLER_MTR);
+//        //GPIO_ResetBits(GPIOD, LED_GREEN);
+//        //--------------------
+//        //OPEN GATE MOTOR
+//        //--------------------   
+//        if(startup != 1){
+//        TM_SERVO_SetDegrees(&Servo2, 180);
+//        }
+//        recycler_state = ROLLER_W8;
+//        AT_time_elap = ulTTmrRead1ms();
+//        #ifdef DEBUG_CONSOLE_EN
+//        CONSOLE("ROLLER IS ROTATING\n\r");
+//        #endif
+//         
+//       break;
+//       
+//       case ROLLER_W8:
+//         if(ulTTmrDiff1ms(AT_time_elap)>=10000){
+//           #ifdef DEBUG_CONSOLE_EN
+//         CONSOLE("BOTTLE BARCODE NOT VALID\n\r");
+//         #endif
+//         //---------------------------
+//         //STOP ROTATING ROLLER MOTOR
+//         //---------------------------
+//        GPIO_SetBits(GPIOA, ROLLER_MTR);
+//        //--------------------
+//        //Close GATE MOTOR
+//        //--------------------        
+//        TM_SERVO_SetDegrees(&Servo2, 0);
+//        recycler_state = RETURN_MTR1;
+//        //recycler_state = W8;
+//        //CONSOLE("$T");
+//        AT_time_elap = ulTTmrRead1ms();
+//        }  
+//         
+//         if(startup == 1 && ulTTmrDiff1ms(AT_time_elap)>=3000)
+//         {
+//           startup = 0;
+//           recycler_state = BOTTLE_STOPPER_MTR;
+//            //GPIO_ResetBits(GPIOA,ROLLER_MTR);
+//         }
+//         
+//       break;
+//             
+//       case RETURN_MTR1:
+//         //--------------------
+//        //BOTTLE STOPPER MOTOR DROP POSITION
+//        //--------------------
+//         #ifdef DEBUG_CONSOLE_EN
+//         CONSOLE("BOTTLE STOPPER IN DROP POSITION\n\r");
+//         #endif
+////        TM_SERVO_SetDegrees(&Servo1, 90);
+////        CONSOLE("Take your bottle back...\n\r");  
+////        //--------------------
+////        //RETURN MOTOR DROP POSITION
+////        //--------------------
+//        #ifdef DEBUG_CONSOLE_EN
+//        CONSOLE("RETURN MOTOR DROP POSITION\n\r");
+//        #endif
+//        TM_SERVO_SetDegrees(&Servo3, 0);
+////        //CONSOLE("motor @ 90\n\r");
+//        recycler_state = RETURN_MTR_W8;
+////        #ifdef DEBUG_CONSOLE_EN
+////        CONSOLE("RETURN MOTOR W8 STATE\n\r");
+////        #endif
+//        AT_time_elap = ulTTmrRead1ms();  
+//       break;
+//  
+//       case RETURN_MTR_W8:
+//          if(ulTTmrDiff1ms(AT_time_elap)>=3000){
+//         //---------------------------
+//         //BOTTLE STOPPER MOTOR STOP POSITION
+//         //---------------------------
+////        #ifdef DEBUG_CONSOLE_EN
+////        CONSOLE("BOTTLE STOPPER IN STOP POSITION\n\r");
+////        #endif
+////        TM_SERVO_SetDegrees(&Servo1, 0);
+////        //CONSOLE("motor @ 0\n\r");     
+////         //---------------------------
+////         //RETURN MOTOR STOP POSITION
+////         //---------------------------
+//        #ifdef DEBUG_CONSOLE_EN
+//        CONSOLE("RETURN MOTOR STOP POSITION\n\r");
+//        #endif
+//        TM_SERVO_SetDegrees(&Servo3, 40);
+////        //CONSOLE("motor @ 0\n\r");
+////        #ifdef DEBUG_CONSOLE_EN
+////        CONSOLE("SWITHING BACK TO IDLE STATE\n\r");
+////        #endif
+//        //CONSOLE("$R");
+//        //GPIO_SetBits(GPIOD, LED_RED);
+//        GPIO_SetBits(GPIOD, LED_GREEN);
+//        GPIO_ResetBits(GPIOD, LED_RED);
+//        //GPIO_ResetBits(GPIOD, LED_GREEN);
+//        CONSOLE("$t");
+//        recycler_state = IDLE;
+//         }      
+//       break;
+//       
+//       
+//       
+//       case W8:
+//         if(ulTTmrDiff1ms(AT_time_elap)>=8000){
+//         recycler_state = IDLE;
+//         //--------------------
+//        //CLOSE GATE MOTOR
+//        //--------------------        
+//        TM_SERVO_SetDegrees(&Servo2, 0);
+//         //GPIO_SetBits(GPIOD, LED_RED);
+//        GPIO_SetBits(GPIOD, LED_GREEN);
+//        GPIO_ResetBits(GPIOD, LED_RED);
+//        //GPIO_ResetBits(GPIOD, LED_GREEN);
+//         CONSOLE("$r");
+//         }
+//       break;
+//       case BOTTLE_STOPPER_MTR:
+//        //--------------------
+//        //BOTTLE STOPPER MOTOR DROP POSITION
+//        //--------------------
+//         #ifdef DEBUG_CONSOLE_EN
+//         CONSOLE("BOTTLE STOPPER MOTOR TO DROP POSITION\n\r");
+//         #endif   
+//         TM_SERVO_SetDegrees(&Servo1, 170);
+//         
+//        //--------------------
+//        //Close GATE MOTOR
+//        //--------------------        
+//        TM_SERVO_SetDegrees(&Servo2, 0);
+//
+//        #ifdef DEBUG_CONSOLE_EN
+//        CONSOLE("BOTTLE STOPPER MOTOR W8 STATE\n\r");
+//        #endif
+//        recycler_state = BOTTLE_STOPPER_W8;
+//        AT_time_elap = ulTTmrRead1ms();  
+//       break;
+//  
+//       case BOTTLE_STOPPER_W8:
+//          if(ulTTmrDiff1ms(AT_time_elap)>=2000){
+//         //---------------------------
+//         //START CRUSHER MOTOR BEFORE
+//         //---------------------------
+//         #ifdef DEBUG_CONSOLE_EN
+//         CONSOLE("START CRUCHER MOTOR\n\r");
+//         #endif
+//        GPIO_ResetBits(GPIOC, CRUSHER_MTR1);
+//        GPIO_ResetBits(GPIOC, CRUSHER_MTR2);
+//         
+//         //GPIO_ResetBits(GPIOD, LED_GREEN);
+//         TM_SERVO_SetDegrees(&Servo1, 85);
+//         GPIO_SetBits(GPIOA,ROLLER_MTR);
+//
+//        #ifdef DEBUG_CONSOLE_EN
+//        //CONSOLE("motor @ 0\n\r");
+//        #endif
+//            recycler_state = ROTATE_CRUSHER_MTR;
+//         }  
+//      
+//       break;
+//       
+//       case ROTATE_CRUSHER_MTR:
+//         //--------------------
+//         //ROTATE CRUSHER MOTOR
+//         //--------------------
+//         #ifdef DEBUG_CONSOLE_EN
+//         CONSOLE("START CRUCHER MOTOR\n\r");
+//         #endif
+//        GPIO_ResetBits(GPIOC, CRUSHER_MTR1);
+//        GPIO_ResetBits(GPIOC, CRUSHER_MTR2);
+//        //GPIO_ResetBits(GPIOD, LED_GREEN);
+//        recycler_state = ROTATE_CRUSHER_W8;
+//        #ifdef DEBUG_CONSOLE_EN
+//        CONSOLE("CRUSHER MOTOR ROTATING W8 STATE\n\r");
+//        #endif
+//        AT_time_elap = ulTTmrRead1ms();  
+//       break;
+//  
+//       case ROTATE_CRUSHER_W8:
+//         if(ulTTmrDiff1ms(AT_time_elap)>=5000){
+//         //---------------------------
+//         //STOP ROTATING CRUSHER MOTOR
+//         //---------------------------
+//           #ifdef DEBUG_CONSOLE_EN
+//           CONSOLE("STOP CRUSHER MOTOR AND GET BACK TO IDLE POSITION\n\r");
+//           #endif
+//        GPIO_SetBits(GPIOC, CRUSHER_MTR1);
+//        GPIO_SetBits(GPIOC, CRUSHER_MTR2);
+//        //GPIO_SetBits(GPIOD, LED_GREEN);
+//        
+//        //---------------------------
+//         //STOP ROTATING ROLLER MOTOR
+//         //---------------------------
+//        GPIO_SetBits(GPIOA, ROLLER_MTR);
+//        //--------------------
+//        //Close GATE MOTOR
+//        //--------------------        
+//        TM_SERVO_SetDegrees(&Servo2, 0);
+//        //--------------------
+//        //BOTTLE STOPPER MOTOR HOLD POSITION
+//        //--------------------
+//        TM_SERVO_SetDegrees(&Servo1, 85);
+//        
+//          recycler_state = IDLE;
+//           //GPIO_SetBits(GPIOD, LED_RED);
+//          GPIO_SetBits(GPIOD, LED_GREEN);
+//          GPIO_ResetBits(GPIOD, LED_RED);
+//          //GPIO_ResetBits(GPIOD, LED_GREEN);
+//          CONSOLE("$r");
+//         }  
+//       break;
+//      case Ext_Scan:
+//        #ifdef DEBUG_CONSOLE_EN
+//        CONSOLE("External Scan Successfyl\n\r");
+//        #endif
+//        //--------------------
+//        //ROTATE ROLLER MOTOR
+//        //--------------------
+//        GPIO_ResetBits(GPIOA, ROLLER_MTR);
+//        //GPIO_ResetBits(GPIOD, LED_GREEN);
+//        //--------------------
+//        //OPEN GATE MOTOR
+//        //--------------------        
+//        TM_SERVO_SetDegrees(&Servo2, 180);     
+//        //--------------------
+//        //BOTTLE STOPPER MOTOR DROP POSITION
+//        //--------------------
+//         #ifdef DEBUG_CONSOLE_EN
+//         CONSOLE("BOTTLE STOPPER MOTOR TO DROP POSITION\n\r");
+//         #endif   
+//         TM_SERVO_SetDegrees(&Servo1, 170);//170
+//             
+//        recycler_state = Ext_Scan_W8;
+//        AT_time_elap = ulTTmrRead1ms();
+//        #ifdef DEBUG_CONSOLE_EN
+//        CONSOLE("External Scan Procedure Started\n\r");
+//        #endif      
+//      break;
+//      case Ext_Scan_W8:
+//        
+//       
+//        if(ulTTmrDiff1ms(AT_time_elap)>=6000){
+//          #ifdef DEBUG_CONSOLE_EN
+//         CONSOLE("BOTTLE NOT FOUND ON ROLLERS\n\r");
+//         #endif
+//         //---------------------------
+//         //STOP ROTATING ROLLER MOTOR
+//         //---------------------------
+//        GPIO_SetBits(GPIOA, ROLLER_MTR);
+//        //--------------------
+//        //Close GATE MOTOR
+//        //--------------------        
+//        TM_SERVO_SetDegrees(&Servo2, 0);
+//        //--------------------
+//        //BOTTLE STOPPER MOTOR HOLD POSITION
+//        //--------------------
+//        TM_SERVO_SetDegrees(&Servo1, 85);
+//       
+//        recycler_state = IDLE;
+//           //GPIO_SetBits(GPIOD, LED_RED);
+//          GPIO_SetBits(GPIOD, LED_GREEN);
+//          GPIO_ResetBits(GPIOD, LED_RED);
+//          //GPIO_ResetBits(GPIOD, LED_GREEN);
+//          CONSOLE("$x");
+//        }
+//        
+//        if(GPIO_ReadInputDataBit(GPIOA, BOTTLE_ON_ROLLER) == false && ulTTmrDiff1ms(AT_time_elap)<5000)
+//        {
+//          //--------------------
+//         //ROTATE CRUSHER MOTOR
+//         //--------------------
+//         #ifdef DEBUG_CONSOLE_EN
+//         CONSOLE("START CRUCHER MOTOR\n\r");
+//         #endif
+//        GPIO_ResetBits(GPIOC, CRUSHER_MTR1);
+//        GPIO_ResetBits(GPIOC, CRUSHER_MTR2);
+//        recycler_state = ROTATE_CRUSHER_W8;
+//        #ifdef DEBUG_CONSOLE_EN
+//        CONSOLE("CRUSHER MOTOR ROTATING\n\r");
+//        #endif
+//        AT_time_elap = ulTTmrRead1ms();  
+//        }
+//        
+//      break;
+//      }
+//         
+//  HANDLE_INT_WATCHDOG
+//}         
+//
+// 
+//return 0;
+//}
+
+//else if(recycler_byte == '111' )
+//              {
+//                 CONSOLE("0\n\r");
+//                 TM_SERVO_SetDegrees(&Servo1, 0);
+//                
+//              }
+//           else if(recycler_byte == '222')
+//              {
+//                 CONSOLE("30\n\r");
+//                 TM_SERVO_SetDegrees(&Servo1, 30);
+//                
+//              }
+//           else if(recycler_byte == '3333')
+//              {
+//                 CONSOLE("60\n\r");
+//                 TM_SERVO_SetDegrees(&Servo1, 60);
+//                
+//              }
+//           else if(recycler_byte == '4444' )
+//              {
+//                 CONSOLE("90\n\r");
+//                 TM_SERVO_SetDegrees(&Servo1, 90);
+//                
+//              }
+//           else if(recycler_byte == '5555')
+//              {
+//                 CONSOLE("120\n\r");
+//                 TM_SERVO_SetDegrees(&Servo1, 120);
+//                
+//              }
+//              else if(recycler_byte == '6666')
+//              {
+//                 CONSOLE("150\n\r");
+//                 TM_SERVO_SetDegrees(&Servo1, 150);
+//                
+//              }
+//           else if(recycler_byte == '7777')
+//              {
+//                 CONSOLE("174\n\r");
+//                 TM_SERVO_SetDegrees(&Servo1, 174);
+//                
+//              }
