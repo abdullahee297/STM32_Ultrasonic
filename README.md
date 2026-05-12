@@ -45,4 +45,4 @@ $$Distance (cm) = \frac{Time (µs) \times 0.0343}{2}$$
 
 1. **Clone the Repo:**
    ```bash
-   git clone [https://github.com/your-username/stm32-ultrasonic-hcsr04.git](https://github.com/your-username/stm32-ultrasonic-hcsr04.git)
+   git clone [[https://github.com/abdullahee297/STM32_Ultrasonic.git](https://github.com/abdullahee297/STM32_Ultrasonic)]
